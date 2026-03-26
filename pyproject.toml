@@ -1,0 +1,45 @@
+[project]
+name = "norax"
+version = "0.1.0"
+description = "Neural operators in JAX"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "equinox>=0.13.6",
+    "optax>=0.2.5",
+    "pardax",
+]
+
+[project.optional-dependencies]
+notebooks = [
+    "ipykernel>=7.2.0",
+    "matplotlib>=3.10.8",
+]
+
+[tool.uv.sources]
+pardax = { git = "ssh://git@github.com/christianfenton/pardax.git" }
+
+[dependency-groups]
+metal = [
+    "jax==0.5.0 ; python_version == '3.12'",
+    "jax-metal==0.1.1 ; python_version == '3.12' and sys_platform == 'darwin'",
+    "optax==0.2.5 ; python_version == '3.12'",
+]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.7",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["norax*"]
+
+[tool.ruff]
+line-length = 79
+
+[tool.mypy]
+ignore_missing_imports = true
