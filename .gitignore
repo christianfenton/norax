@@ -7,9 +7,15 @@ wheels/
 *.egg-info
 .ruff_cache/
 .mypy_cache/
+.pytest_cache/
+.coverage
 
 # Virtual environments
 .venv
 
 # Developer files
 sandbox/
+profiling/
+
+# IDE config
+.vscode/

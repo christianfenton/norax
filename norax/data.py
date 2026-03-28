@@ -1,8 +1,7 @@
 from collections.abc import Iterator
-from typing import Dict
 
-import jax
-import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Array, Shaped
 
 
 class DataLoader(Iterator):
@@ -10,19 +9,19 @@ class DataLoader(Iterator):
 
     def __init__(
         self,
-        key,
-        dataset: Dict[str, jax.Array],
+        dataset: dict[str, Shaped[Array, "n_samples *shape"]],
         batch_size: int,
         shuffle: bool = True,
+        seed: int = 0,
     ):
         """
         Args:
-            key: PRNG key used to shuffle the dataset
             dataset: Dictionary mapping string keys to arrays.
                 All arrays must share the same size along their first axis.
             batch_size: Number of samples per batch. The final batch of an
                 epoch may be smaller if the dataset size is not divisible.
             shuffle: Optionally shuffle the samples at the start of each epoch
+            seed: Integer seed for the random number generator used to shuffle
         """
         if not dataset:
             raise ValueError("dataset must not be empty.")
@@ -37,18 +36,21 @@ class DataLoader(Iterator):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.n_samples = next(iter(dataset.values())).shape[0]
-        self._key = key
+        self._seed = seed
+        self._n_resets = 0
         self.reset()
 
     def reset(self) -> None:
         """Reset the iterator to the beginning of the dataset."""
-        self.indices = jnp.arange(self.n_samples)
         if self.shuffle:
-            self._key, subkey = jax.random.split(self._key)
-            self.indices = jax.random.permutation(subkey, self.indices)
+            rng = np.random.default_rng(self._seed)
+            self.indices = rng.permutation(self.n_samples)
+            self._seed += 1
+        else:
+            self.indices = np.arange(self.n_samples)
         self.current_idx = 0
 
-    def __next__(self) -> Dict[str, jax.Array]:
+    def __next__(self) -> dict[str, Shaped[Array, "batch *shape"]]:
         """Return the next batch.
 
         Returns:

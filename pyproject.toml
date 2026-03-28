@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "equinox>=0.13.6",
+    "jaxtyping>=0.3.9",
     "optax>=0.2.5",
     "pardax",
 ]
@@ -26,9 +27,12 @@ metal = [
     "optax==0.2.5 ; python_version == '3.12'",
 ]
 dev = [
+    "beartype>=0.22.9",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-cov>=7.1.0",
     "ruff>=0.15.7",
+    "snakeviz>=2.2.2",
 ]
 
 [build-system]
@@ -41,5 +45,12 @@ include = ["norax*"]
 [tool.ruff]
 line-length = 79
 
+[tool.ruff.lint]
+ignore = ["F722"]  # jaxtyping shape strings are falsely flagged as forward annotation syntax errors
+
 [tool.mypy]
+python_version = "3.12"
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--jaxtyping-packages=norax,beartype.beartype"

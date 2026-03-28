@@ -1,13 +1,12 @@
-import pytest
-import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from norax.data import DataLoader
 
 
 class TestDataLoader:
-    key = jax.random.key(0)
+    seed = 0
     n_samples = 10
     batch_size = 3
 
@@ -24,22 +23,22 @@ class TestDataLoader:
 
     def test_empty_dataset_raises(self):
         with pytest.raises(ValueError, match="empty"):
-            DataLoader(self.key, {}, batch_size=4)
+            DataLoader({}, batch_size=4, seed=self.seed)
 
     def test_mismatched_sizes_raises(self):
         dataset = {"input": jnp.ones((10, 1)), "output": jnp.ones((8, 1))}
         with pytest.raises(ValueError, match="same number of samples"):
-            DataLoader(self.key, dataset, batch_size=4)
+            DataLoader(dataset, batch_size=4, seed=self.seed)
 
     def test_len(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         assert len(loader) == 4
 
     def test_batch_sizes(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         batches = list(loader)
 
@@ -52,21 +51,21 @@ class TestDataLoader:
     def test_all_samples_covered(self, dataset):
         """Every sample index appears exactly once per epoch."""
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         seen = np.concatenate([np.array(b["input"]).flatten() for b in loader])
         assert sorted(seen) == list(range(self.n_samples))
 
     def test_all_keys_present(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         for batch in loader:
             assert set(batch.keys()) == {"input", "output"}
 
     def test_stop_iteration(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         list(loader)  # exhaust
         with pytest.raises(StopIteration):
@@ -74,7 +73,7 @@ class TestDataLoader:
 
     def test_reset_allows_reiteration(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         first = [np.array(b["input"]) for b in loader]
         loader.reset()
@@ -85,7 +84,7 @@ class TestDataLoader:
 
     def test_no_shuffle_preserves_order(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=False
+            dataset, batch_size=self.batch_size, shuffle=False, seed=self.seed
         )
         seen = np.concatenate([np.array(b["input"]).flatten() for b in loader])
         np.testing.assert_array_equal(
@@ -95,14 +94,14 @@ class TestDataLoader:
     def test_shuffle_covers_all_samples(self, dataset):
         """Shuffled epoch must still cover every sample exactly once."""
         loader = DataLoader(
-            self.key, dataset, batch_size=self.batch_size, shuffle=True
+            dataset, batch_size=self.batch_size, shuffle=True, seed=self.seed
         )
         seen = np.concatenate([np.array(b["input"]).flatten() for b in loader])
         assert sorted(seen) == list(range(self.n_samples))
 
     def test_shuffle_changes_order(self, dataset):
         loader = DataLoader(
-            self.key, dataset, batch_size=self.n_samples, shuffle=True
+            dataset, batch_size=self.n_samples, shuffle=True, seed=self.seed
         )
 
         # Two consecutive epochs should differ

@@ -1,10 +1,12 @@
-from typing import Optional, Callable
+from collections.abc import Callable
+from typing import Optional
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import equinox as eqx
+from jaxtyping import Array, Float, PRNGKeyArray
 
-from .layers import Linear, Fourier
+from .layers import Fourier, Linear
 
 
 class MLP(eqx.Module):
@@ -19,7 +21,7 @@ class MLP(eqx.Module):
 
     def __init__(
         self,
-        key,
+        key: PRNGKeyArray,
         sizes: tuple[int, ...],
         activation: Callable = jax.nn.gelu,
         dtype: jnp.dtype = jnp.result_type(float),
@@ -49,7 +51,9 @@ class MLP(eqx.Module):
             layers.append(Linear(subkey, sizes[i], sizes[i + 1], dtype=dtype))
         self.layers = layers
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(
+        self, x: Float[Array, "*batch input_dim"]
+    ) -> Float[Array, "*batch output_dim"]:
         """Perform a forward pass.
 
         Args:
@@ -67,7 +71,7 @@ class FNO(eqx.Module):
     """
     Fourier neural operator.
 
-    The input is expected to have shape (*spatial_dims, channels_in).
+    The input is expected to have shape (*coords, channels_in).
 
     Reference:
         Li et al. "Fourier Neural Operator for Parametric Partial
@@ -82,7 +86,7 @@ class FNO(eqx.Module):
 
     def __init__(
         self,
-        key,
+        key: PRNGKeyArray,
         channels_in: int,
         channels_out: int,
         n_modes: tuple[int, ...],
@@ -98,7 +102,7 @@ class FNO(eqx.Module):
             key: PRNG key for parameter initialisation
             channels_in: Number of input channels
             channels_out: Number of output channels
-            n_modes: Tuple of maximum Fourier modes per spatial axis
+            n_modes: Tuple of maximum number of modes per coordinate axis
             width: Hidden channel width
             depth: Number of Fourier layers
             activation: Non-linear activation function
@@ -108,7 +112,7 @@ class FNO(eqx.Module):
         """
         self.depth = depth
 
-        # Lifting: (*spatial_dims, channels_in) -> (*spatial_dims, width)
+        # Lifting: (*coords, channels_in) -> (*coords, width)
         if lift is not None:
             self.lift = lift
         else:
@@ -125,7 +129,7 @@ class FNO(eqx.Module):
             fourier_layers.append(layer)
         self.fourier_layers = fourier_layers
 
-        # Projection: (*spatial_dims, width) -> (*spatial_dims, channels_out)
+        # Projection: (*coords, width) -> (*coords, channels_out)
         if project is not None:
             self.project = project
         else:
@@ -134,14 +138,16 @@ class FNO(eqx.Module):
                 subkey, (width, width, channels_out), activation, dtype=dtype
             )
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(
+        self, x: Float[Array, "*coords channels_in"]
+    ) -> Float[Array, "*coords channels_out"]:
         """Perform a forward pass.
 
         Args:
-            x: Input tensor of shape (*spatial_dims, channels_in)
+            x: Input tensor of shape (*coords, channels_in)
 
         Returns:
-            Output tensor of shape (*spatial_dims, channels_out)
+            Output tensor of shape (*coords, channels_out)
         """
         x = self.lift(x)
 

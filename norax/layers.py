@@ -1,8 +1,9 @@
-from typing import Callable
+from collections.abc import Callable
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import equinox as eqx
+from jaxtyping import Array, Complex, Float, PRNGKeyArray
 
 from .initialisers import complex_glorot
 
@@ -10,16 +11,16 @@ from .initialisers import complex_glorot
 class Linear(eqx.Module):
     """A pointwise linear transformation applied along the last axis."""
 
-    weight: jax.Array
-    bias: jax.Array
+    weight: Float[Array, "channels_out channels_in"]
+    bias: Float[Array, "channels_out"]
 
     def __init__(
         self,
-        key,
+        key: PRNGKeyArray,
         channels_in: int,
         channels_out: int,
         init: Callable = jax.nn.initializers.glorot_uniform(),
-        dtype: jnp.dtype = jnp.result_type(float)
+        dtype: jnp.dtype = jnp.result_type(float),
     ) -> None:
         """
         Args:
@@ -32,14 +33,16 @@ class Linear(eqx.Module):
         self.weight = init(key, (channels_out, channels_in), dtype=dtype)
         self.bias = jnp.zeros(channels_out, dtype=dtype)
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(
+        self, x: Float[Array, "*batch channels_in"]
+    ) -> Float[Array, "*batch channels_out"]:
         """Apply a linear transformation along the last axis.
 
         Args:
-            x: Array with shape (*spatial_dims, channels_in)
+            x: Array with shape (*coords, channels_in)
 
         Returns:
-            Array with shape (*spatial_dims, channels_out)
+            Array with shape (*coords, channels_out)
         """
         return jnp.einsum("...i,ji->...j", x, self.weight) + self.bias
 
@@ -51,57 +54,60 @@ class SpectralConv(eqx.Module):
         Li et al. "Fourier Neural Operator for Parametric Partial
             Differential Equations" (2020).
     """
+
     channels_in: int = eqx.field(static=True)
     channels_out: int = eqx.field(static=True)
     n_modes: tuple[int, ...] = eqx.field(static=True)
-    n_spatial_dims: int = eqx.field(static=True)
-    weights: jax.Array
+    n_dims: int = eqx.field(static=True)
+    weights: Complex[Array, "channels_out channels_in *n_modes"]
 
     def __init__(
         self,
-        key,
+        key: PRNGKeyArray,
         channels_in: int,
         channels_out: int,
         n_modes: tuple[int, ...],
         init: Callable = complex_glorot,
-        dtype = jnp.result_type(float)
+        dtype=jnp.result_type(float),
     ) -> None:
         """
         Args:
             key: PRNG key for parameter initialisation
             channels_in: Number of input channels
             channels_out: Number of output channels
-            n_modes: Maximum number of Fourier modes to retain per spatial axis
+            n_modes: Maximum number of modes to keep per coordinate axis
             init: Complex weight initialiser
             dtype: Floating-point dtype for the real components of the weights
         """
         self.channels_in = channels_in
         self.channels_out = channels_out
         self.n_modes = n_modes
-        self.n_spatial_dims = len(n_modes)
-        
+        self.n_dims = len(n_modes)
+
         weight_shape = (channels_out, channels_in) + tuple(n_modes)
         self.weights = init(key, shape=weight_shape, dtype=dtype)
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(
+        self, x: Float[Array, "*coords channels_in"]
+    ) -> Float[Array, "*coords channels_out"]:
         """Perform a spectral convolution using an FFT.
 
         Args:
-            x: Input array with shape (*spatial_dims, channels_in)
+            x: Input array with shape (*coords, channels_in)
 
         Returns:
-            Array with shape (*spatial_dims, channels_out)
+            Array with shape (*coords, channels_out)
         """
-        spatial_dims = x.shape[:self.n_spatial_dims]
-        spatial_axes = tuple(range(self.n_spatial_dims))
+        coords = x.shape[: self.n_dims]
+        coord_axes = tuple(range(self.n_dims))
 
         # Transform to spectral space
-        Fx = jnp.fft.rfftn(x, s=spatial_dims, axes=spatial_axes, norm="ortho")
+        Fx = jnp.fft.rfftn(x, s=coords, axes=coord_axes, norm="ortho")
         rfft_shape = Fx.shape
 
         # Truncate to retained modes
         slices = []
-        for i in range(self.n_spatial_dims):
+        for i in range(self.n_dims):
             n_freq = Fx.shape[i]
             k = self.n_modes[i]
 
@@ -112,7 +118,7 @@ class SpectralConv(eqx.Module):
                     f"Increase the spatial resolution or reduce n_modes."
                 )
 
-            if i < self.n_spatial_dims - 1:
+            if i < self.n_dims - 1:
                 pos = list(range(k))
                 neg = list(range(Fx.shape[i] - k, Fx.shape[i]))
                 slices.append(jnp.array(pos + neg))
@@ -128,21 +134,21 @@ class SpectralConv(eqx.Module):
         #   result:   (mode_0, mode_1, ..., channels_out)
         #
         # 2D example: "oiab,abi->abo"
-        _SPATIAL_LABELS = "abcdefghjklmnpqrstuvwxyz"  # excludes 'i' and 'o'
-        mode_labels = _SPATIAL_LABELS[:self.n_spatial_dims]
+        _DIM_LABELS = "abcdefghjklmnpqrstuvwxyz"  # excludes 'i' and 'o'
+        mode_labels = _DIM_LABELS[: self.n_dims]
         ein_str = f"oi{mode_labels},{mode_labels}i->{mode_labels}o"
         Fv_trunc = jnp.einsum(ein_str, self.weights, Fx_trunc)
 
         # Place the truncated modes into a full-sized array
-        sh = rfft_shape[:self.n_spatial_dims]
+        sh = rfft_shape[: self.n_dims]
         Fv = jnp.zeros((*sh, self.channels_out), dtype=Fv_trunc.dtype)
         Fv = Fv.at[jnp.ix_(*slices)].set(Fv_trunc)
 
         # Transform back to physical space
-        out = jnp.fft.irfftn(Fv, s=spatial_dims, axes=spatial_axes, norm="ortho")
+        out = jnp.fft.irfftn(Fv, s=coords, axes=coord_axes, norm="ortho")
 
         return out
-    
+
 
 class Fourier(eqx.Module):
     """A Fourier layer for a Fourier neural operator.
@@ -151,13 +157,14 @@ class Fourier(eqx.Module):
         Li et al. "Fourier Neural Operator for Parametric Partial
             Differential Equations" (2020).
     """
+
     spectral: SpectralConv
     linear: Linear
     activation: Callable = eqx.field(static=True)
 
     def __init__(
         self,
-        key,
+        key: PRNGKeyArray,
         channels_in: int,
         channels_out: int,
         n_modes: tuple[int, ...],
@@ -169,29 +176,33 @@ class Fourier(eqx.Module):
             key: PRNG key for parameter initialisation
             channels_in: Number of input channels
             channels_out: Number of output channels
-            n_modes: Tuple of maximum Fourier modes per spatial axis
+            n_modes: Tuple of maximum number of modes per coordinate axis
             activation: Non-linear activation function
             dtype: Floating-point dtype of the parameters
         """
         key1, key2 = jax.random.split(key)
-        self.spectral = SpectralConv(key1, channels_in, channels_out, n_modes, dtype=dtype)
+        self.spectral = SpectralConv(
+            key1, channels_in, channels_out, n_modes, dtype=dtype
+        )
         self.linear = Linear(key2, channels_in, channels_out, dtype=dtype)
         self.activation = activation
 
-    def __call__(self, x: jax.Array) -> jax.Array:
+    def __call__(
+        self, x: Float[Array, "*coords channels_in"]
+    ) -> Float[Array, "*coords channels_out"]:
         """Apply the Fourier layer.
 
         The layer computes v_{t+1} = sigma(W v_t + F^{-1}[R * F(v_t)]),
-        where W is a trainable pointwise linear transformation, 
-        F is the fast Fourier transform, 
+        where W is a trainable pointwise linear transformation,
+        F is the fast Fourier transform,
         R contains trainable complex weights for the retained Fourier modes,
         sigma is a non-linear activation function,
         and * denotes element-wise multiplication.
 
         Args:
-            x: Input tensor of shape (*spatial_dims, channels_in)
+            x: Input tensor of shape (*coords, channels_in)
 
         Returns:
-            Array with shape (*spatial_dims, channels_out)
+            Array with shape (*coords, channels_out)
         """
         return self.activation(self.spectral(x) + self.linear(x))

@@ -1,14 +1,15 @@
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, Complex, PRNGKeyArray
 
 
 def complex_glorot(
-    key,
+    key: PRNGKeyArray,
     shape: tuple[int, ...],
     in_axis: int = 1,
     out_axis: int = 0,
     dtype: jnp.dtype = jnp.result_type(float),
-) -> jax.Array:
+) -> Complex[Array, "*shape"]:
     """Glorot-scaled complex weight initialisation.
 
     Args:
