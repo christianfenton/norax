@@ -12,59 +12,65 @@ from .layers import Fourier, Linear
 class MLP(eqx.Module):
     "Multi-layer perceptron."
 
-    input_dim: int = eqx.field(static=True)
-    output_dim: int = eqx.field(static=True)
-    width: int = eqx.field(static=True)
-    depth: int = eqx.field(static=True)
-    layers: list
     activation: Callable = eqx.field(static=True)
+    depth: int = eqx.field(static=True)
+    width: int = eqx.field(static=True)
+    hidden_layers: tuple
+    output_layer: Linear
 
     def __init__(
         self,
         key: PRNGKeyArray,
-        sizes: tuple[int, ...],
+        input_dim: int,
+        output_dim: int,
+        depth: int,
+        width: int,
         activation: Callable = jax.nn.gelu,
         dtype: jnp.dtype = jnp.result_type(float),
     ) -> None:
         """
         Args:
             key: PRNG key for parameter initialisation
-            sizes: Tuple of layer widths ``(input_dim, hidden..., output_dim)``
+            input_dim: Dimensionality of the input features
+            output_dim: Dimensionality of the output
+            depth: Number of layers (including output layer)
+            width: Number of dimensions in the hidden layers
             activation: Non-linear activation applied between hidden layers.
                 Not applied after the final layer.
             dtype: Floating-point dtype of the parameters
         """
-        if len(sizes) < 2:
-            raise ValueError(
-                "sizes must contain at least two elements (input and output)."
-            )
-
-        self.input_dim = sizes[0]
-        self.output_dim = sizes[-1]
-        self.depth = len(sizes) - 1
-        self.width = max(sizes[1:-1]) if len(sizes) > 2 else 0
         self.activation = activation
+        self.width = width
+        self.depth = depth
 
-        layers = []
-        for i in range(len(sizes) - 1):
+        dims = (input_dim, *((depth - 1) * (width,)), output_dim)
+
+        hidden_layers = []
+        for i in range(len(dims) - 2):
             key, subkey = jax.random.split(key)
-            layers.append(Linear(subkey, sizes[i], sizes[i + 1], dtype=dtype))
-        self.layers = layers
+            hidden_layers.append(
+                Linear(subkey, dims[i], dims[i + 1], dtype=dtype)
+            )
+        self.hidden_layers = tuple(hidden_layers)
+
+        key, subkey = jax.random.split(key)
+        self.output_layer = Linear(subkey, dims[-2], dims[-1], dtype=dtype)
 
     def __call__(
-        self, x: Float[Array, "*batch input_dim"]
-    ) -> Float[Array, "*batch output_dim"]:
+        self, x: Float[Array, "... input_dim"]
+    ) -> Float[Array, "... output_dim"]:
         """Perform a forward pass.
 
         Args:
-            x: Input array of shape ``(*batch_dims, input_dim)``
+            x: Input array of shape ``(..., input_dim)``.
 
         Returns:
-            Output array of shape ``(*batch_dims, output_dim)``
+            Output array of shape ``(..., output_dim)``.
         """
-        for layer in self.layers[:-1]:
+        for layer in self.hidden_layers:
             x = self.activation(layer(x))
-        return self.layers[-1](x)
+
+        return self.output_layer(x)
 
 
 class FNO(eqx.Module):
@@ -78,11 +84,9 @@ class FNO(eqx.Module):
             Differential Equations" (2020).
     """
 
-    depth: int = eqx.field(static=True)
-
-    lift: eqx.Module
-    fourier_layers: list
-    project: eqx.Module
+    lift: Callable
+    project: Callable
+    fourier_layers: tuple
 
     def __init__(
         self,
@@ -94,8 +98,8 @@ class FNO(eqx.Module):
         depth: int = 4,
         activation: Callable = jax.nn.gelu,
         dtype: jnp.dtype = jnp.result_type(float),
-        lift: Optional[eqx.Module] = None,
-        project: Optional[eqx.Module] = None,
+        lift: Optional[Callable] = None,
+        project: Optional[Callable] = None,
     ) -> None:
         """
         Args:
@@ -107,27 +111,42 @@ class FNO(eqx.Module):
             depth: Number of Fourier layers
             activation: Non-linear activation function
             dtype: Floating-point dtype of the parameters
-            lift: Optional custom lifting module
-            project: Optional custom projection module
+            lift: Optional custom lifting layer. Must be callable.
+                Default: MLP with depth=2 and width=2*width.
+            project: Optional custom projection layer. Must be callable.
+                Default: MLP with depth=2 and width=2*width.
         """
-        self.depth = depth
 
         # Lifting: (*coords, channels_in) -> (*coords, width)
         if lift is not None:
             self.lift = lift
         else:
             key, subkey = jax.random.split(key)
-            self.lift = MLP(subkey, (channels_in, width), dtype=dtype)
+            self.lift = MLP(
+                subkey,
+                input_dim=channels_in,
+                output_dim=width,
+                depth=2,
+                width=2 * width,
+                activation=activation,
+                dtype=dtype,
+            )
 
-        # Fourier layers: width -> width
+        # Fourier layers: (*coords, width) -> (*coords, width)
         fourier_layers = []
         for _ in range(depth):
             key, subkey = jax.random.split(key)
-            layer = Fourier(
-                subkey, width, width, n_modes, activation, dtype=dtype
+            fourier_layers.append(
+                Fourier(
+                    subkey,
+                    channels_in=width,
+                    channels_out=width,
+                    n_modes=n_modes,
+                    activation=activation,
+                    dtype=dtype,
+                )
             )
-            fourier_layers.append(layer)
-        self.fourier_layers = fourier_layers
+        self.fourier_layers = tuple(fourier_layers)
 
         # Projection: (*coords, width) -> (*coords, channels_out)
         if project is not None:
@@ -135,7 +154,13 @@ class FNO(eqx.Module):
         else:
             key, subkey = jax.random.split(key)
             self.project = MLP(
-                subkey, (width, width, channels_out), activation, dtype=dtype
+                subkey,
+                input_dim=width,
+                output_dim=channels_out,
+                depth=2,
+                width=2 * width,
+                activation=activation,
+                dtype=dtype,
             )
 
     def __call__(
@@ -154,6 +179,4 @@ class FNO(eqx.Module):
         for layer in self.fourier_layers:
             x = layer(x)
 
-        x = self.project(x)
-
-        return x
+        return self.project(x)

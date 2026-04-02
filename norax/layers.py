@@ -3,7 +3,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Complex, Float, PRNGKeyArray
+from jaxtyping import Array, Float, PRNGKeyArray
 
 from .initialisers import complex_glorot
 
@@ -11,38 +11,38 @@ from .initialisers import complex_glorot
 class Linear(eqx.Module):
     """A pointwise linear transformation applied along the last axis."""
 
-    weight: Float[Array, "channels_out channels_in"]
-    bias: Float[Array, "channels_out"]
+    weight: Float[Array, "output_dim input_dim"]
+    bias: Float[Array, " output_dim"]
 
     def __init__(
         self,
         key: PRNGKeyArray,
-        channels_in: int,
-        channels_out: int,
+        input_dim: int,
+        output_dim: int,
         init: Callable = jax.nn.initializers.glorot_uniform(),
         dtype: jnp.dtype = jnp.result_type(float),
     ) -> None:
         """
         Args:
             key: PRNG key for parameter initialisation
-            channels_in: Number of input channels
-            channels_out: Number of output channels
+            input_dim: Number of input channels
+            output_dim: Number of output channels
             init: Weight initialiser
             dtype: Floating-point dtype of the parameters
         """
-        self.weight = init(key, (channels_out, channels_in), dtype=dtype)
-        self.bias = jnp.zeros(channels_out, dtype=dtype)
+        self.weight = init(key, (output_dim, input_dim), dtype=dtype)
+        self.bias = jnp.zeros(output_dim, dtype=dtype)
 
     def __call__(
-        self, x: Float[Array, "*batch channels_in"]
-    ) -> Float[Array, "*batch channels_out"]:
+        self, x: Float[Array, "... input_dim"]
+    ) -> Float[Array, "... output_dim"]:
         """Apply a linear transformation along the last axis.
 
         Args:
-            x: Array with shape (*coords, channels_in)
+            x: Array with shape (..., channels_in)
 
         Returns:
-            Array with shape (*coords, channels_out)
+            Array with shape (..., channels_out)
         """
         return jnp.einsum("...i,ji->...j", x, self.weight) + self.bias
 
@@ -59,7 +59,8 @@ class SpectralConv(eqx.Module):
     channels_out: int = eqx.field(static=True)
     n_modes: tuple[int, ...] = eqx.field(static=True)
     n_dims: int = eqx.field(static=True)
-    weights: Complex[Array, "channels_out channels_in *n_modes"]
+    weights_re: Float[Array, "channels_out channels_in *n_modes"]
+    weights_im: Float[Array, "channels_out channels_in *n_modes"]
 
     def __init__(
         self,
@@ -76,16 +77,19 @@ class SpectralConv(eqx.Module):
             channels_in: Number of input channels
             channels_out: Number of output channels
             n_modes: Maximum number of modes to keep per coordinate axis
-            init: Complex weight initialiser
-            dtype: Floating-point dtype for the real components of the weights
+            init: Complex weight initialiser used to draw the initial
+                real and imaginary components
+            dtype: Floating-point dtype of the parameters
         """
         self.channels_in = channels_in
         self.channels_out = channels_out
         self.n_modes = n_modes
         self.n_dims = len(n_modes)
 
-        weight_shape = (channels_out, channels_in) + tuple(n_modes)
-        self.weights = init(key, shape=weight_shape, dtype=dtype)
+        sh = (channels_out, channels_in) + tuple(n_modes)
+        w = init(key, shape=sh, dtype=dtype)
+        self.weights_re = w.real
+        self.weights_im = w.imag
 
     def __call__(
         self, x: Float[Array, "*coords channels_in"]
@@ -134,10 +138,11 @@ class SpectralConv(eqx.Module):
         #   result:   (mode_0, mode_1, ..., channels_out)
         #
         # 2D example: "oiab,abi->abo"
+        weights = self.weights_re + 1j * self.weights_im
         _DIM_LABELS = "abcdefghjklmnpqrstuvwxyz"  # excludes 'i' and 'o'
         mode_labels = _DIM_LABELS[: self.n_dims]
         ein_str = f"oi{mode_labels},{mode_labels}i->{mode_labels}o"
-        Fv_trunc = jnp.einsum(ein_str, self.weights, Fx_trunc)
+        Fv_trunc = jnp.einsum(ein_str, weights, Fx_trunc)
 
         # Place the truncated modes into a full-sized array
         sh = rfft_shape[: self.n_dims]

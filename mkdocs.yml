@@ -1,0 +1,46 @@
+site_name: norax
+site_description: Neural operators in JAX
+repo_url: https://github.com/christianfenton/norax
+repo_name: christianfenton/norax
+
+theme:
+  name: material
+
+plugins:
+  - autorefs
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_object_full_path: false
+            show_source: false
+            heading_level: 2
+            docstring_style: google
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            members_order: source
+
+markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Examples:
+    - Burgers' equation:
+      - Training an FNO: examples/burgers/training.md
+      - Data generation: examples/burgers/generation.md
+  - API: api.md

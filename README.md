@@ -68,3 +68,30 @@ y = jax.vmap(model)(x)     # (batch, resolution, channels_out)
 
 The `n_modes` tuple determines the spatial dimensionality of the operator:
 a 1-tuple gives a 1D FNO, a 2-tuple gives a 2D FNO, and so on.
+
+## Development
+
+Dependencies are split into groups for different workflows:
+
+| Group | Purpose | Install |
+|-------|---------|---------|
+| `test` | pytest, pytest-codeblocks, beartype | `uv sync --group test` |
+| `docs` | mkdocs and plugins | `uv sync --group docs` |
+| `examples` | h5py, matplotlib, ipykernel | `uv sync --extra examples` |
+| `lint` | ruff, mypy | `uv sync --group lint` |
+
+To install everything at once:
+```bash
+uv sync --all-groups --all-extras
+```
+
+## Documentation
+
+Build the documentation locally by running
+```bash
+uv run mkdocs build
+```
+or serve them as a local webpage with
+```bash
+uv run mkdocs serve
+```
