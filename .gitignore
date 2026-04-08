@@ -9,16 +9,14 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 .coverage
+.vscode/
+site/
 
-# Virtual environments
-.venv
+# Environments and lock files
+.venv/
+venv/
+uv.lock
 
 # Developer files
 sandbox/
 profiling/
-
-# IDE config
-.vscode/
-
-# Documentation builds
-site/
