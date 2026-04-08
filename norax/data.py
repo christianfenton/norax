@@ -9,7 +9,7 @@ class DataLoader(Iterator):
 
     def __init__(
         self,
-        dataset: dict[str, Shaped[Array, "n_samples *shape"]],
+        dataset: dict[str, Shaped[Array, " n_samples *shape"]],
         batch_size: int,
         shuffle: bool = True,
         seed: int = 0,
@@ -50,7 +50,7 @@ class DataLoader(Iterator):
             self.indices = np.arange(self.n_samples)
         self.current_idx = 0
 
-    def __next__(self) -> dict[str, Shaped[Array, "batch *shape"]]:
+    def __next__(self) -> dict[str, Shaped[Array, " batch *shape"]]:
         """Return the next batch.
 
         Returns:

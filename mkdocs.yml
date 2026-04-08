@@ -43,4 +43,4 @@ nav:
     - Burgers' equation:
       - Training an FNO: examples/burgers/training.md
       - Data generation: examples/burgers/generation.md
-  - API: api.md
+  - API reference: api.md

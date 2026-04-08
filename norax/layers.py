@@ -69,7 +69,7 @@ class SpectralConv(eqx.Module):
         channels_out: int,
         n_modes: tuple[int, ...],
         init: Callable = complex_glorot,
-        dtype=jnp.result_type(float),
+        dtype: jnp.dtype = jnp.result_type(float),
     ) -> None:
         """
         Args:
