@@ -2,15 +2,23 @@
 
 Neural operators in JAX.
 
+[![tests](https://github.com/christianfenton/norax/actions/workflows/tests.yml/badge.svg)](https://github.com/christianfenton/norax/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/christianfenton/norax/graph/badge.svg)](https://codecov.io/gh/christianfenton/norax)
+[![lint](https://github.com/christianfenton/norax/actions/workflows/lint.yml/badge.svg)](https://github.com/christianfenton/norax/actions/workflows/lint.yml)
+[![docs](https://github.com/christianfenton/norax/actions/workflows/docs.yml/badge.svg)](https://github.com/christianfenton/norax/actions/workflows/docs.yml)
+
 `norax` provides implementations of neural operators built on top of 
 [JAX](https://github.com/jax-ml/jax) and
-[Equinox](https://github.com/patrick-kidger/equinox). 
+[Equinox](https://github.com/patrick-kidger/equinox).
 
-Features:
+Neural operators learn mappings between function spaces.
 
-- Fourier neural operators (FNO): learns mappings between function spaces via
-  learnable convolutions in the frequency domain
-  ([Li et al., 2020](https://arxiv.org/abs/2010.08895))
+Currently only Fourier neural operators 
+([Li et al., 2020](https://arxiv.org/abs/2010.08895)) 
+are provided in this library.
+
+Check out the [documentation page](https://christianfenton.github.io/norax)
+for more details.
 
 ## Installation
 
@@ -69,29 +77,8 @@ y = jax.vmap(model)(x)     # (batch, resolution, channels_out)
 The `n_modes` tuple determines the spatial dimensionality of the operator:
 a 1-tuple gives a 1D FNO, a 2-tuple gives a 2D FNO, and so on.
 
-## Development
+## Contributing
 
-Dependencies are split into groups for different workflows:
-
-| Group | Purpose | Install |
-|-------|---------|---------|
-| `test` | pytest, pytest-codeblocks, beartype | `uv sync --group test` |
-| `docs` | mkdocs and plugins | `uv sync --group docs` |
-| `examples` | h5py, matplotlib, ipykernel | `uv sync --extra examples` |
-| `lint` | ruff, mypy | `uv sync --group lint` |
-
-To install everything at once:
-```bash
-uv sync --all-groups --all-extras
-```
-
-## Documentation
-
-Build the documentation locally by running
-```bash
-uv run mkdocs build
-```
-or serve them as a local webpage with
-```bash
-uv run mkdocs serve
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on setting up a 
+development environment, running tests, linting, and building the documentation
+locally.
