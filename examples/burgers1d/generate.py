@@ -35,6 +35,7 @@ uv run examples/burgers1d/generate.py \
 """
 
 import argparse
+import math
 
 import equinox as eqx
 import h5py
@@ -85,31 +86,30 @@ class GaussianField1D(eqx.Module):
         return jnp.real(f_x)
 
 
-def diffusion(t: float, u: jax.Array, nu: float, dx: float) -> jax.Array:
+def diffusion(t: float, u: jax.Array, params: dict) -> jax.Array:
     """nu * d²u/dx² (periodic, central differences)."""
+    nu, dx = params["nu"], params["dx"]
     return nu * (jnp.roll(u, -1) - 2 * u + jnp.roll(u, 1)) / dx**2
 
 
-def advection(t: float, u: jax.Array, nu: float, dx: float) -> jax.Array:
+def advection(t: float, u: jax.Array, params: dict) -> jax.Array:
     """-u * du/dx (periodic, central differences)."""
+    dx = params["dx"]
     dudx = (jnp.roll(u, -1) - jnp.roll(u, 1)) / (2 * dx)
     return -u * dudx
 
 
-def build_stepper(nu: float, resolution: int, L: float) -> pdx.IMEX:
-    """Return a pseudo-spectral time-stepper.
+def build_stepper(
+    nu: float, resolution: int, L: float
+) -> tuple[pdx.RK4, pdx.BackwardEuler]:
+    """Return explicit (RK4) and implicit (BackwardEuler) time-steppers.
 
-    The pesudo-spectral approach works by diagonalising the discrete
-    Laplacian to advance the diffusive term exactly, followed by
-    advancing the convective term with an explicit method.
-
-    For the second-order central difference stencil on a periodic grid,
-    the eigenvalues of the Laplacian are
+    The pseudo-spectral approach diagonalises the discrete Laplacian to
+    advance the diffusive term exactly via pointwise division in Fourier
+    space. For the second-order central difference stencil on a periodic
+    grid, the eigenvalues of the Laplacian are
     $$ \\sigma_k = \\frac{-4 \\sin^2(k \\Delta x / 2)}{\\Delta x^2}, $$
-    where $k = 2\'pi m / L$ are the discrete wavenumbers.
-    The implicit system at each time step is
-    $(I - h \\nu \\sigma_k)\\hat{u}_k = \\hat{b}_k$,
-    which reduces to a pointwise division in Fourier space.
+    where $k = 2\\pi m / L$ are the discrete wavenumbers.
     """
     dx = L / resolution
     k = 2 * jnp.pi * jnp.fft.rfftfreq(resolution, d=dx)
@@ -123,10 +123,7 @@ def build_stepper(nu: float, resolution: int, L: float) -> pdx.IMEX:
     root_finder = pdx.LinearRootFinder(
         linsolver=spectral_solver, operator=operator
     )
-    return pdx.IMEX(
-        explicit=pdx.ForwardEuler(),
-        implicit=pdx.BackwardEuler(root_finder=root_finder),
-    )
+    return pdx.RK4(), pdx.BackwardEuler(root_finder=root_finder)
 
 
 def parse_args() -> argparse.Namespace:
@@ -170,25 +167,29 @@ def main() -> None:
     n = args.resolution
     L = 1.0
     dx = L / n
+    params = {"nu": args.nu, "dx": dx}
 
-    rhs = {"explicit": advection, "implicit": diffusion}
+    num_steps = math.ceil(args.t_end / args.dt)
+    step_size = jnp.asarray(args.t_end / num_steps)
 
-    stepper = build_stepper(args.nu, n, L)
+    explicit, implicit = build_stepper(args.nu, n, L)
     grf = GaussianField1D(n, L)
     sample_batch = jax.vmap(jax.jit(lambda key_: grf.sample(key_)))
 
-    solve_batch = jax.vmap(
-        jax.jit(
-            lambda y0: pdx.solve_ivp(
-                rhs,
-                (0.0, args.t_end),
-                y0,
-                stepper,
-                args.dt,
-                args=(args.nu, dx),
-            )
+    def imex_step(carry, _):
+        t, y, exp_st, imp_st = carry
+        y_star, exp_st = exp_st(advection, t, y, step_size, params)
+        y_new, imp_st = imp_st(diffusion, t, y_star, step_size, params)
+        return (t + step_size, y_new, exp_st, imp_st), y_new
+
+    @jax.jit
+    def solve(y0):
+        (_, y_final, _, _), _ = jax.lax.scan(
+            imex_step, (0.0, y0, explicit, implicit), length=num_steps
         )
-    )
+        return y_final
+
+    solve_batch = jax.vmap(solve)
 
     key = jax.random.key(args.seed)
 
@@ -238,8 +239,7 @@ def main() -> None:
             batch_keys = jax.random.split(subkey, batch)
             y0 = sample_batch(batch_keys)  # (batch, n)
 
-            _, y = solve_batch(y0)  # (batch, T+1, n)
-            y_end = y[:, -1, :]  # (batch, n)
+            y_end = solve_batch(y0)  # (batch, n)
 
             inputs_np = np.empty((batch, n, 2), dtype=dtype)
             inputs_np[:, :, 0] = x[None, :]

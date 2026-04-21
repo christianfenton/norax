@@ -108,14 +108,16 @@ differences.
 The advection and diffusion right-hand sides are defined as:
 
 ```python
-def advection(t: float, u: jax.Array, nu: float, dx: float) -> jax.Array:
+def advection(t: float, u: jax.Array, params: dict) -> jax.Array:
     """-u * du/dx (periodic, central differences)."""
+    dx = params["dx"]
     dudx = (jnp.roll(u, -1) - jnp.roll(u, 1)) / (2 * dx)
     return -u * dudx
 
 
-def diffusion(t: float, u: jax.Array, nu: float, dx: float) -> jax.Array:
+def diffusion(t: float, u: jax.Array, params: dict) -> jax.Array:
     """nu * d²u/dx² (periodic, central differences)."""
+    nu, dx = params["nu"], params["dx"]
     return nu * (jnp.roll(u, -1) - 2 * u + jnp.roll(u, 1)) / dx**2
 ```
 
@@ -150,10 +152,36 @@ root_finder = pdx.LinearRootFinder(
     operator=operator
 )
 
-stepper = pdx.IMEX(
-    explicit=pdx.ForwardEuler(),
-    implicit=pdx.BackwardEuler(root_finder=root_finder),
-)
+explicit = pdx.RK4()
+implicit = pdx.BackwardEuler(root_finder=root_finder)
+```
+
+```python
+import math
+
+params = {"nu": nu, "dx": dx}
+step_size = 1e-4
+t_span = (0.0, 1.0)
+
+num_steps = math.ceil((t_span[1] - t_span[0]) / step_size)
+step_size = jnp.asarray((t_span[1] - t_span[0]) / num_steps)
+
+
+def imex_step(carry, _):
+    t, y, exp_st, imp_st = carry
+    y_star, exp_st = exp_st(advection, t, y, step_size, params)
+    y_new, imp_st = imp_st(diffusion, t, y_star, step_size, params)
+    return (t + step_size, y_new, exp_st, imp_st), (t + step_size, y_new)
+
+
+@jax.jit
+def solve(y0):
+    (_, y_final, _, _), _ = jax.lax.scan(
+        imex_step, (t_span[0], y0, explicit, implicit), length=num_steps
+    )
+    return y_final
+
+solve_batch = jax.vmap(solve)
 ```
 
 For further details on numerical time integration in JAX, check out
@@ -162,29 +190,7 @@ For further details on numerical time integration in JAX, check out
 
 ## Solving the PDE
 
-Define the RHS dictionary and a batched solver:
-
-```python
-rhs = {"explicit": advection, "implicit": diffusion}
-
-dt = 1e-4  # time step size
-t_end = 1.0
-
-solve_batch = jax.vmap(
-    jax.jit(
-        lambda y0: pdx.solve_ivp(
-            rhs,
-            (0.0, t_end),
-            y0,
-            stepper,
-            dt,
-            args=(nu, dx),
-        )
-    )
-)
-```
-
-Visualise a few samples to confirm the setup looks right:
+Solve and visualise a few samples to confirm the setup looks right:
 
 ```python
 import matplotlib.pyplot as plt
@@ -192,10 +198,10 @@ import matplotlib.pyplot as plt
 num_examples = 3
 key, subkey = jax.random.split(key)
 preview_keys = jax.random.split(subkey, num_examples)
-y0_preview = sample_batch(preview_keys) # (num_examples, resolution)
 
-_, y_preview = solve_batch(y0_preview)  # (num_examples, T+1, resolution)
-y_end_preview = y_preview[:, -1, :]  # (num_examples, resolution)
+y0_preview = sample_batch(preview_keys)
+
+y_end_preview = solve_batch(y0_preview)
 
 fig, axes = plt.subplots(2, num_examples, figsize=(16, 9), layout="tight")
 
@@ -256,8 +262,8 @@ with h5py.File(output_path, "w") as f:
     f.attrs.update(
         {
             "nu": nu,
-            "dt": dt,
-            "t_end": t_end,
+            "dt": step_size,
+            "t_end": t_span[1],
             "resolution": resolution,
             "num_samples": num_samples,
             "L": L,
@@ -272,8 +278,7 @@ with h5py.File(output_path, "w") as f:
         batch_keys = jax.random.split(subkey, batch)
         y0 = sample_batch(batch_keys)  # (batch, resolution)
 
-        _, y = solve_batch(y0)  # (batch, T+1, resolution)
-        y_end = y[:, -1, :]  # (batch, resolution)
+        y_end = solve_batch(y0)  # (batch, T+1, resolution)
 
         inputs_np = np.empty((batch, resolution, 2), dtype=dtype)
         inputs_np[:, :, 0] = x[None, :]
