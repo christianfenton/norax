@@ -20,3 +20,6 @@ uv.lock
 # Developer files
 sandbox/
 profiling/
+
+# AI Copilot files
+CLAUDE.md
