@@ -92,21 +92,23 @@ class SpectralConv(eqx.Module):
         self.weights_im = w.imag
 
     def __call__(
-        self, x: Float[Array, "*coords channels_in"]
-    ) -> Float[Array, "*coords channels_out"]:
+        self, x: Float[Array, "*grid_shape channels_in"]
+    ) -> Float[Array, "*grid_shape channels_out"]:
         """Perform a spectral convolution using an FFT.
 
         Args:
-            x: Input array with shape (*coords, channels_in)
+            x: Input array with shape ``(*grid_shape, channels_in)``, where
+                ``*grid_shape`` gives the number of grid points along each
+                spatial axis (e.g. ``(n,)`` for 1D or ``(nx, ny)`` for 2D).
 
         Returns:
-            Array with shape (*coords, channels_out)
+            Array with shape ``(*grid_shape, channels_out)``.
         """
-        coords = x.shape[: self.n_dims]
-        coord_axes = tuple(range(self.n_dims))
+        grid_shape = x.shape[: self.n_dims]
+        grid_axes = tuple(range(self.n_dims))
 
         # Transform to spectral space
-        Fx = jnp.fft.rfftn(x, s=coords, axes=coord_axes, norm="ortho")
+        Fx = jnp.fft.rfftn(x, s=grid_shape, axes=grid_axes, norm="ortho")
         rfft_shape = Fx.shape
 
         # Truncate to retained modes
@@ -150,7 +152,7 @@ class SpectralConv(eqx.Module):
         Fv = Fv.at[jnp.ix_(*slices)].set(Fv_trunc)
 
         # Transform back to physical space
-        out = jnp.fft.irfftn(Fv, s=coords, axes=coord_axes, norm="ortho")
+        out = jnp.fft.irfftn(Fv, s=grid_shape, axes=grid_axes, norm="ortho")
 
         return out
 
@@ -193,8 +195,8 @@ class Fourier(eqx.Module):
         self.activation = activation
 
     def __call__(
-        self, x: Float[Array, "*coords channels_in"]
-    ) -> Float[Array, "*coords channels_out"]:
+        self, x: Float[Array, "*grid_shape channels_in"]
+    ) -> Float[Array, "*grid_shape channels_out"]:
         """Apply the Fourier layer.
 
         The layer computes v_{t+1} = sigma(W v_t + F^{-1}[R * F(v_t)]),
@@ -205,9 +207,11 @@ class Fourier(eqx.Module):
         and * denotes element-wise multiplication.
 
         Args:
-            x: Input tensor of shape (*coords, channels_in)
+            x: Input array with shape ``(*grid_shape, channels_in)``, where
+                ``*grid_shape`` gives the number of grid points along each
+                spatial axis (e.g. ``(n,)`` for 1D or ``(nx, ny)`` for 2D).
 
         Returns:
-            Array with shape (*coords, channels_out)
+            Array with shape ``(*grid_shape, channels_out)``.
         """
         return self.activation(self.spectral(x) + self.linear(x))
