@@ -1,17 +1,17 @@
 # Burgers' equation in one dimension
 
-This file describes how to use the scripts in this directory to 1D to
-generate a dataset from Burgers' equation, train an FNO on it, 
+This file describes how to use the scripts in this directory to
+generate a dataset from Burgers' equation, train an FNO on it,
 and visualise the results.
 
 The 1D viscous Burgers' equation on a periodic domain $x \in [0, 1)$ reads
 
 $$
-\frac{\partial u}{\partial t} 
+\frac{\partial u}{\partial t}
 = -u\frac{\partial u}{\partial x} + \nu\frac{\partial^2 u}{\partial x^2},
 $$
 
-where $\nu > 0$ is the kinematic viscosity. The first term is a non-linear 
+where $\nu > 0$ is the kinematic viscosity. The first term is a non-linear
 advective term and the second is a diffusive term.
 
 The learning task is to approximate the solution operator
@@ -19,7 +19,7 @@ $$ \mathcal{G}^\dagger : u_0 \mapsto u(\cdot,\, t_\text{end}), $$
 mapping an initial condition $u_0$ to the solution at time $t_\text{end}$.
 
 **Note:** To run the scripts in this directory, users need to have the
-'examples' dependency group installed. This can be done by running:
+`examples` dependencies installed:
 
 ```bash
 uv sync --extra examples
@@ -44,57 +44,53 @@ The spatial derivatives are discretised using second-order accurate central
 differences.
 
 The solution is advanced through time with an implicit-explicit (IMEX) scheme.
-The advective term is advanced with a forward Euler method and the diffusive
-term is advanced with a backward Euler method, where the linear system
-is diagonalised and inverted directly in Fourier space.
+The advective term is advanced with a fourth-order Runge-Kutta (RK4) method
+and the diffusive term is advanced with a backward Euler method, where the
+linear system is inverted directly in Fourier space.
 
-For further details on numerical time integration in JAX, check out 
+For further details on numerical time integration in JAX, check out
 [pardax](https://github.com/christianfenton/pardax).
 
-### 1.3 Dataset format
+### 1.3 Data schema
 
-The dataset is stored in an HDF5 file with two datasets:
-- `inputs` with shape `(N, n, 2)`
-- `outputs` with shape `(N, n, 1)`
+The dataset is stored as a directory containing:
 
-For each sample $i$, the grid points are `x = inputs[i, :, 0]` 
-and the initial condition is `u0 = inputs[i, :, 1]`
-
-Metadata are stored as HDF5 attributes on the root group.
+- `data.parquet` — columnar data file with columns:
+  - `sample_id` (`int64`): sample index
+  - `x` (`list<float32>`, length `n`): spatial grid coordinates
+  - `u0` (`list<float32>`, length `n`): initial condition $u_0(x)$
+  - `u_end` (`list<float32>`, length `n`): solution $u(x, t_\text{end})$
+- `metadata.json` — dataset attributes (`nu`, `dt`, `t_end`, `resolution`, `L`, `seed`, `num_samples`, `dtype`)
 
 ### 1.4 Generating the dataset
 
-Install the examples dependencies if they're not already installed:
-
 ```bash
-uv sync --extra examples
-```
-
-Then run the generation script:
-
-```bash
-uv run examples/burgers1d/generate_burgers1d.py \
+uv run examples/burgers1d/generate.py \
     --num-samples 1280 \
     --resolution 2048 \
-    --output examples/burgers1d/data/burgers1d.h5
+    --output-dir examples/burgers1d/data
 ```
 
-**CLI Options:**
+This creates `examples/burgers1d/data/burgers1d_nu0p02_res2048/`.
+
+**CLI options:**
 
 | Flag | Default | Description |
-| ---- | ------- | ----------- |
-| `--num-samples` | *required* | Total number of samples to generate |
-| `--resolution`| *required* | Number of spatial grid points |
-| `--output` | *required* | Path to the output HDF5 file |
+|------|---------|-------------|
+| `--num-samples` | *(required)* | Total number of samples to generate |
+| `--resolution` | *(required)* | Number of spatial grid points |
+| `--output-dir` | *(required)* | Parent directory for the output dataset folder |
+| `--name` | auto | Dataset directory name (default: `burgers1d_nu<nu>_res<resolution>`) |
 | `--nu` | `0.02` | Viscosity |
 | `--dt` | `1e-4` | Time step size |
-| `--t_end` `1.0` | | End time |
-| `--batch-size` | `64`  | Samples generated per batch |
-| `--seed` | `0` | Seed for pseudo-random number generator
+| `--t-end` | `1.0` | End time |
+| `--batch-size` | `64` | Samples generated per batch |
+| `--dtype` | `float32` | Floating-point precision (`float32` or `float64`) |
+| `--seed` | `0` | Seed for pseudo-random number generator |
 
 ## 2. Training
 
-This section describes how to train an FNO on the 1D Burgers' equation 
+This section describes how to train an FNO on the 1D Burgers' equation
 dataset and visualise the results.
 
 Source files:
@@ -102,12 +98,11 @@ Source files:
 - `examples/burgers1d/train.py`: training script
 - `examples/burgers1d/visualise.ipynb`: visualisation notebook
 
-
 ### 2.1 Model
 
-An FNO with `channels_in=2` (spatial coordinate and initial condition) 
-and `channels_out=1` (solution at $t_\text{end}$) is trained to 
-approximate the solution operator 
+An FNO with `channels_in=2` (spatial coordinate and initial condition)
+and `channels_out=1` (solution at $t_\text{end}$) is trained to
+approximate the solution operator
 $\mathcal{G}^\dagger : u_0 \mapsto u(\cdot,\,t_\text{end})$.
 
 ### 2.2 Cost function
@@ -115,11 +110,11 @@ $\mathcal{G}^\dagger : u_0 \mapsto u(\cdot,\,t_\text{end})$.
 Training minimises the mean relative $L^2$ error over a mini-batch:
 
 $$
-\mathcal{C} 
+\mathcal{C}
 = \frac{1}{B}\sum_{i=1}^{B} \frac{\|\hat{u}_i - u_i\|_2}{\|u_i\|_2},
 $$
 
-where $\hat{u}_i$ is the model prediction and 
+where $\hat{u}_i$ is the model prediction and
 $u_i$ is the ground-truth solution for sample $i$.
 
 ### 2.3 Optimisation
@@ -130,22 +125,22 @@ The default initial learning rate is `1e-3`.
 ### 2.4 Training the model
 
 ```bash
-uv run examples/burgers1d/train_burgers1d.py \
-    --data examples/burgers1d/data/burgers1d.h5 \
+uv run examples/burgers1d/train.py \
+    --data examples/burgers1d/data/burgers1d_nu0p02_res2048 \
     --output examples/burgers1d/models/burgers1d_fno_256.eqx \
     --resolution 256 \
     --n-train 1024 --n-test 256
 ```
 
-**CLI options**
+**CLI options:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--data` | *(required)* | Path to the HDF5 dataset |
+| `--data` | *(required)* | Path to the dataset directory produced by `generate.py` |
 | `--output` | *(required)* | Path to save the trained model |
 | `--n-train` | *(required)* | Number of training samples |
 | `--n-test` | *(required)* | Number of test samples |
-| `--resolution` | `None` | Target resolution after downsampling |
+| `--resolution` | `None` | Target resolution after downsampling (must divide dataset resolution) |
 | `--n-modes` | `16` | Maximum Fourier modes per axis |
 | `--width` | `64` | Hidden channel width |
 | `--depth` | `4` | Number of Fourier layers |
@@ -165,7 +160,7 @@ save_model("model.eqx", model, hyperparams)
 model, hyperparams = load_model("model.eqx")
 ```
 
-Both functions are defined in `train.py` and follow Equinox's 
+Both functions are defined in `train.py` and follow Equinox's
 recommended serialisation pattern.
 
 ## 3. Visualisation
