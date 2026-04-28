@@ -16,6 +16,4 @@
 
 ## Utilities
 
-::: norax.data.DataLoader
-
 ::: norax.initialisers.complex_glorot
