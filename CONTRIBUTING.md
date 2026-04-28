@@ -25,7 +25,7 @@ Dependencies are split into groups so you only install what you need:
 | `test` | pytest, beartype | `uv sync --group test` |
 | `lint` | ruff, mypy | `uv sync --group lint` |
 | `docs` | mkdocs and plugins | `uv sync --group docs` |
-| `examples` | matplotlib, ipykernel, pardax, h5py, optax | `uv sync --extra examples` |
+| `examples` | matplotlib, ipykernel, pardax, datasets, optax | `uv sync --extra examples` |
 
 To install everything at once:
 

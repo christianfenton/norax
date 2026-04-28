@@ -1,15 +1,16 @@
 """Train a Fourier neural operator (FNO) on the 1D Burgers' equation dataset.
 
-The script loads an HDF5 dataset produced by ``generate_burgers1d.py``,
-optionally down-resolves it to a coarser grid, trains an FNO to learn the
-operator mapping the initial condition to the solution at time ``t_end``,
-and serialises the trained model to disk.
+This script:
+1. Loads a Parquet dataset produced by ``generate.py``
+2. (Optionally) Down-samples the data to a coarser grid
+3. Trains an FNO to learn the mapping from initial condition to final solution
+4. Saves (serialises) the trained model to disk.
 
 Usage:
 
 ```bash
 uv run examples/burgers1d/train.py \
-    --data examples/burgers1d/data/burgers1d.h5 \
+    --data examples/burgers1d/data/burgers1d_nu0p2_res2048 \
     --output examples/burgers1d/models/burgers1d_fno_256.eqx \
     --resolution 256 \
     --n-train 1024 --n-test 256
@@ -18,64 +19,96 @@ uv run examples/burgers1d/train.py \
 
 import argparse
 import json
+import math
+import pathlib
 from functools import partial
 
+import datasets
 import equinox as eqx
-import h5py
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 from jaxtyping import install_import_hook
 
 with install_import_hook("norax", "beartype.beartype"):
-    from norax.data import DataLoader
     from norax.models import FNO
 
 
-def load_data(path: str) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Load inputs, outputs, and metadata from an HDF5 dataset file.
+def load_parquet(data_dir: str) -> tuple[datasets.Dataset, dict]:
+    """Load a Parquet dataset directory produced by ``generate.py``.
 
     Args:
-        path: Path to an HDF5 file produced by ``generate_burgers1d.py``.
+        data_dir: Path to a dataset directory. Must contain ``metadata.json``
+            and ``data.parquet``.
 
     Returns:
-        inputs: Array of shape ``(N, resolution, 2)`` where channel 0 is the
-            spatial grid and channel 1 is the initial condition ``u_0(x)``.
-        outputs: Array of shape ``(N, resolution, 1)`` containing the
-            solution ``u(x, t_end)``.
-        metadata: Dictionary of dataset attributes
+        dataset: HuggingFace Dataset with columns ``sample_id``, ``x``,
+            ``u0``, and ``u_end``.
+        metadata: Dictionary of dataset attributes.
     """
-    with h5py.File(path, "r") as f:
-        inputs = np.asarray(f["inputs"])
-        outputs = np.asarray(f["outputs"])
-        metadata = dict(f.attrs)
-    return inputs, outputs, metadata
+    root = pathlib.Path(data_dir)
+    with open(root / "metadata.json") as f:
+        metadata = json.load(f)
+
+    n = metadata["resolution"]
+    features = datasets.Features(
+        {
+            "sample_id": datasets.Value("int64"),
+            "x": datasets.Sequence(datasets.Value("float32"), length=n),
+            "u0": datasets.Sequence(datasets.Value("float32"), length=n),
+            "u_end": datasets.Sequence(datasets.Value("float32"), length=n),
+        }
+    )
+    dataset = datasets.load_dataset(
+        "parquet",
+        data_files=str(root / "data.parquet"),
+        split="train",
+        features=features,
+    )
+    return dataset, metadata
 
 
-def downsample(
-    inputs: np.ndarray,
-    outputs: np.ndarray,
-    target_res: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Downsample inputs and outputs to a coarser spatial resolution.
+def preprocess(
+    dataset: datasets.Dataset, n: int, stride: int = 1
+) -> datasets.Dataset:
+    """Build ``input`` and ``output`` columns from raw Parquet columns.
+
+    Optionally subsamples the spatial grid by ``stride``. The resulting
+    ``input`` column stacks the spatial grid and initial condition along the
+    channel axis; ``output`` wraps the solution in a trailing size-1 channel.
 
     Args:
-        inputs: Array of shape ``(N, res, 2)``
-        outputs: Array of shape ``(N, res, 1)``
-        target_res: Desired number of grid points after subsampling
+        dataset: Raw dataset with columns ``x``, ``u0``, and ``u_end``.
+        n: Original spatial resolution (number of grid points).
+        stride: Subsampling stride. ``1`` keeps the original resolution.
 
     Returns:
-        Downsampled inputs and outputs
+        Dataset with columns ``input`` of shape ``(n // stride, 2)`` and
+        ``output`` of shape ``(n // stride, 1)`` per sample.
     """
-    orig_res = inputs.shape[1]
-    if orig_res % target_res != 0:
-        raise ValueError(
-            f"Original resolution {orig_res} is not evenly divisible by "
-            f"target resolution {target_res}."
-        )
-    stride = orig_res // target_res
-    return inputs[:, ::stride, :], outputs[:, ::stride, :]
+    target_n = n // stride
+    out_features = datasets.Features(
+        {
+            "input": datasets.Array2D(shape=(target_n, 2), dtype="float32"),
+            "output": datasets.Array2D(shape=(target_n, 1), dtype="float32"),
+        }
+    )
+
+    def _build(batch):
+        x = jnp.array(batch["x"])[:, ::stride]
+        u0 = jnp.array(batch["u0"])[:, ::stride]
+        u_end = jnp.array(batch["u_end"])[:, ::stride]
+        return {
+            "input": jnp.stack([x, u0], axis=-1),
+            "output": u_end[:, :, None],
+        }
+
+    return dataset.map(
+        _build,
+        batched=True,
+        remove_columns=dataset.column_names,
+        features=out_features,
+    )
 
 
 def save_model(path: str, model: FNO, hyperparams: dict) -> None:
@@ -128,10 +161,10 @@ def eval_step(model: FNO, x: jax.Array, y: jax.Array) -> jax.Array:
     return jnp.sum(loss_fn(model, x, y))
 
 
-def evaluate(model: FNO, loader: DataLoader) -> float:
+def evaluate(model: FNO, dataset: datasets.Dataset, batch_size: int) -> float:
     total_loss = jnp.zeros(())
     n_samples = 0
-    for batch in loader:
+    for batch in dataset.iter(batch_size=batch_size):
         x, y = batch["input"], batch["output"]
         n_samples += x.shape[0]
         total_loss += eval_step(model, x, y)
@@ -160,11 +193,12 @@ def run_epoch(
     model: FNO,
     opt_state: optax.OptState,
     optimiser: optax.GradientTransformation,
-    loader: DataLoader,
+    dataset: datasets.Dataset,
+    batch_size: int,
 ) -> tuple[FNO, optax.OptState, float]:
     total_loss = jnp.zeros(())
     n_samples = 0
-    for batch in loader:
+    for batch in dataset.iter(batch_size=batch_size):
         x, y = batch["input"], batch["output"]
         n_samples += x.shape[0]
         model, opt_state, batch_loss = train_step(
@@ -182,7 +216,7 @@ def parse_args() -> argparse.Namespace:
         "--data",
         type=str,
         required=True,
-        help="Path to the HDF5 dataset produced by generate_burgers1d.py.",
+        help="Path to Parquet dataset directory produced by generate.py.",
     )
     parser.add_argument(
         "--output",
@@ -271,46 +305,39 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    # Load data
-    inputs, outputs, metadata = load_data(args.data)
-    orig_res = inputs.shape[1]
+    # Load and preprocess data
+    raw_ds, metadata = load_parquet(args.data)
+    orig_res = metadata["resolution"]
     print(
-        f"Loaded {inputs.shape[0]} samples at resolution {orig_res} "
+        f"Loaded {len(raw_ds)} samples at resolution {orig_res} "
         f"(nu={metadata.get('nu')}, t_end={metadata.get('t_end')})"
     )
 
-    # Optional down-resolution
     if args.resolution is not None and args.resolution != orig_res:
-        inputs, outputs = downsample(inputs, outputs, args.resolution)
-        resolution = args.resolution
-        print(f"Down-sampled to resolution {resolution}")
+        if orig_res % args.resolution != 0:
+            raise ValueError(
+                f"Original resolution {orig_res} is not evenly divisible by "
+                f"target resolution {args.resolution}."
+            )
+        stride = orig_res // args.resolution
+        print(f"Down-sampling to resolution {args.resolution}")
     else:
-        resolution = orig_res
+        stride = 1
 
     total_needed = args.n_train + args.n_test
-    if total_needed > inputs.shape[0]:
+    if total_needed > len(raw_ds):
         raise ValueError(
-            f"Dataset has {inputs.shape[0]} samples but "
+            f"Dataset has {len(raw_ds)} samples but "
             f"n_train + n_test = {total_needed}."
         )
 
-    # Build DataLoaders
-    inputs_jax = jnp.asarray(inputs[:total_needed])
-    outputs_jax = jnp.asarray(outputs[:total_needed])
+    ds = preprocess(
+        raw_ds.select(range(total_needed)), orig_res, stride
+    ).with_format("jax")
 
-    train_data = {
-        "input": inputs_jax[: args.n_train],
-        "output": outputs_jax[: args.n_train],
-    }
-    test_data = {
-        "input": inputs_jax[args.n_train : total_needed],
-        "output": outputs_jax[args.n_train : total_needed],
-    }
-
-    train_loader = DataLoader(
-        train_data, args.batch_size, shuffle=True, seed=args.seed
-    )
-    test_loader = DataLoader(test_data, args.batch_size, shuffle=False, seed=0)
+    splits = ds.train_test_split(test_size=args.n_test, shuffle=False)
+    train_ds = splits["train"]
+    test_ds = splits["test"]
 
     # Model
     hyperparams = {
@@ -328,7 +355,7 @@ def main() -> None:
     )
 
     # Optimiser
-    steps_per_epoch = len(train_loader)
+    steps_per_epoch = math.ceil(args.n_train / args.batch_size)
     schedule = optax.schedules.exponential_decay(
         args.lr,
         transition_steps=steps_per_epoch * 100,
@@ -340,14 +367,13 @@ def main() -> None:
 
     # Training loop
     for epoch in range(1, args.n_epochs + 1):
+        shuffled = train_ds.shuffle(seed=args.seed + epoch)
         model, opt_state, train_loss = run_epoch(
-            model, opt_state, optimiser, train_loader
+            model, opt_state, optimiser, shuffled, args.batch_size
         )
-        train_loader.reset()
 
         if epoch % 10 == 0 or epoch == args.n_epochs:
-            test_loss = evaluate(model, test_loader)
-            test_loader.reset()
+            test_loss = evaluate(model, test_ds, args.batch_size)
             print(
                 f"Epoch {epoch:4d}/{args.n_epochs}  "
                 f"train={train_loss:.4e}  test={test_loss:.4e}"

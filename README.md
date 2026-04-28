@@ -62,7 +62,7 @@ key = jax.random.key(0)
 # Define a 1D Fourier neural operator
 model = FNO(
     key,
-    channels_in=2,   # e.g. [grid coordinates, function values]
+    channels_in=2,   # 1D scalar field: [x-coordinate, field value]
     channels_out=1,
     n_modes=(16,),   # Fourier modes to retain per spatial axis
     width=64,
@@ -70,8 +70,8 @@ model = FNO(
 )
 
 # Forward pass over a batch using vmap
-x = jnp.ones((10, 64, 2))  # (batch, resolution, channels_in)
-y = jax.vmap(model)(x)     # (batch, resolution, channels_out)
+x = jnp.ones((10, 64, 2))  # (batch, *grid_shape, channels_in)
+y = jax.vmap(model)(x)     # (batch, *grid_shape, channels_out)
 ```
 
 The `n_modes` tuple determines the spatial dimensionality of the operator:
