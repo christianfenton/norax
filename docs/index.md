@@ -43,16 +43,15 @@ pip install git+https://github.com/christianfenton/norax.git
 ```python
 import jax
 import jax.numpy as jnp
-from norax.models import FNO
+import norax as nrx
 
 key = jax.random.key(0)
 
-# 1D Fourier neural operator
-model = FNO(
+model = nrx.FNO(
     key,
-    channels_in=2,   # 1D scalar field: [x-coordinate, field value]
+    channels_in=2,
     channels_out=1,
-    n_modes=(16,),   # Fourier modes to retain along the spatial axis
+    n_modes=(16,),  # Number of Fourier modes to retain along the spatial axis
     width=64,
     depth=4,
 )
@@ -65,3 +64,7 @@ y = jax.vmap(model)(x)      # (batch, *grid_shape, channels_out)
 ## Related projects
 
 - [neuraloperator](https://github.com/neuraloperator/neuraloperator): PyTorch implementations of neural operators
+
+## References
+
+Li, Zongyi, et al. "Fourier neural operator for parametric partial differential equations." arXiv preprint arXiv:2010.08895 (2020).

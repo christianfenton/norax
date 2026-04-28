@@ -1,8 +1,9 @@
 # Training an FNO on Burgers' equation in 1D
 
-This tutorial demonstrates how to train a Fourier neural operator to
-predict solutions of Burgers' equation in 1D. Users that want to just
-run a training script without reading this tutorial
+This example demonstrates how a Fourier neural operator can be trained
+to predict solutions of Burgers' equation in 1D. 
+
+Users that want to just run a training script without reading this tutorial
 can look at `examples/burgers1d/train.py` on
 [GitHub](https://github.com/christianfenton/norax).
 
@@ -22,10 +23,12 @@ where $\nu > 0$ is the kinematic viscosity. The first term is a non-linear
 advective term and the second is a diffusive term.
 
 The learning task is to approximate the solution operator
+
 $$
-\mathcal{G}^\dagger : u_0 \mapsto u(\cdot,\, t_\text{end}),
+\mathcal{G}^{\dagger} : u_0 \mapsto u\left(\cdot, t_{\text{end}}\right)
 $$
-mapping an initial condition $u_0$ to the solution at time $t_\text{end}$.
+
+mapping an initial condition $u_0$ to the solution at time $t_{\text{end}}$.
 
 ```python
 import math
@@ -43,15 +46,14 @@ import equinox as eqx
 
 ## Data loading
 
-Load the data from Hugging Face Datasets 
-(https://huggingface.co/datasets/TortillaChip/burgers1d-periodic):
+Load the data from [Hugging Face](https://huggingface.co/datasets/TortillaChip/burgers1d-periodic):
 
 ```python
 ds = datasets.load_dataset("TortillaChip/burgers1d-periodic", split="train")
 ```
 
-For details on how the training data is generated, see
-[Generating training data for Burgers' Equation in 1D](generation.md).
+To generate the data yourself, see the [Generating Training Data](generation.md)
+example.
 
 ## Data preprocessing
 
