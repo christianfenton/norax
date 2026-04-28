@@ -74,7 +74,10 @@ class MLP(eqx.Module):
 
 
 class FNO(eqx.Module):
-    """Fourier neural operator.
+    """
+    Fourier neural operator.
+
+    The input is expected to have shape (*coords, channels_in).
 
     Reference:
         Li et al. "Fourier Neural Operator for Parametric Partial
@@ -103,7 +106,10 @@ class FNO(eqx.Module):
             key: PRNG key for parameter initialisation
             channels_in: Number of input channels
             channels_out: Number of output channels
-            n_modes: Tuple of maximum number of modes per coordinate axis
+            n_modes: Number of modes to retain per axis. For non-last axes,
+                ``n_modes[i]`` modes are kept at each end of the spectrum
+                (positive and negative). For the last axis, ``n_modes[-1]``
+                modes are kept from the one-sided RFFT spectrum.
             width: Hidden channel width
             depth: Number of Fourier layers
             activation: Non-linear activation function
@@ -114,7 +120,7 @@ class FNO(eqx.Module):
                 Default: MLP with depth=2 and width=2*width.
         """
 
-        # Lifting: (*grid_shape, channels_in) -> (*grid_shape, width)
+        # Lifting: (*coords, channels_in) -> (*coords, width)
         if lift is not None:
             self.lift = lift
         else:
@@ -129,7 +135,7 @@ class FNO(eqx.Module):
                 dtype=dtype,
             )
 
-        # Fourier layers: (*grid_shape, width) -> (*grid_shape, width)
+        # Fourier layers: (*coords, width) -> (*coords, width)
         fourier_layers = []
         for _ in range(depth):
             key, subkey = jax.random.split(key)
@@ -145,7 +151,7 @@ class FNO(eqx.Module):
             )
         self.fourier_layers = tuple(fourier_layers)
 
-        # Projection: (*grid_shape, width) -> (*grid_shape, channels_out)
+        # Projection: (*coords, width) -> (*coords, channels_out)
         if project is not None:
             self.project = project
         else:
@@ -161,18 +167,15 @@ class FNO(eqx.Module):
             )
 
     def __call__(
-        self, x: Float[Array, "*grid_shape channels_in"]
-    ) -> Float[Array, "*grid_shape channels_out"]:
+        self, x: Float[Array, "*coords channels_in"]
+    ) -> Float[Array, "*coords channels_out"]:
         """Perform a forward pass.
 
         Args:
-            x: Input array with shape ``(*grid_shape, channels_in)``
-                For example, a 1D input with a single channel would have shape
-                ``(n, 1)``, while a 2D input with a single channel
-                would have shape ``(nx, ny, 1)``.
+            x: Input tensor of shape (*coords, channels_in)
 
         Returns:
-            Output array with shape ``(*grid_shape, channels_out)``.
+            Output tensor of shape (*coords, channels_out)
         """
         x = self.lift(x)
 

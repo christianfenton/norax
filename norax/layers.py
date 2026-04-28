@@ -59,8 +59,8 @@ class SpectralConv(eqx.Module):
     channels_out: int = eqx.field(static=True)
     n_modes: tuple[int, ...] = eqx.field(static=True)
     n_dims: int = eqx.field(static=True)
-    weights_re: Float[Array, "channels_out channels_in *n_modes"]
-    weights_im: Float[Array, "channels_out channels_in *n_modes"]
+    weights_re: Float[Array, "channels_out channels_in *weight_modes"]
+    weights_im: Float[Array, "channels_out channels_in *weight_modes"]
 
     def __init__(
         self,
@@ -76,7 +76,11 @@ class SpectralConv(eqx.Module):
             key: PRNG key for parameter initialisation
             channels_in: Number of input channels
             channels_out: Number of output channels
-            n_modes: Maximum number of modes to keep per coordinate axis
+            n_modes: Number of modes to retain per axis. For non-last axes,
+                ``n_modes[i]`` modes are kept at each end of the spectrum
+                (positive and negative), so the stored weight size is
+                ``2 * n_modes[i]``. For the last axis the one-sided RFFT
+                spectrum is used, so ``n_modes[-1]`` weights are stored.
             init: Complex weight initialiser used to draw the initial
                 real and imaginary components
             dtype: Floating-point dtype of the parameters
@@ -86,29 +90,30 @@ class SpectralConv(eqx.Module):
         self.n_modes = n_modes
         self.n_dims = len(n_modes)
 
-        sh = (channels_out, channels_in) + tuple(n_modes)
+        mode_shape = tuple(
+            2 * m if i < len(n_modes) - 1 else m for i, m in enumerate(n_modes)
+        )
+        sh = (channels_out, channels_in) + mode_shape
         w = init(key, shape=sh, dtype=dtype)
         self.weights_re = w.real
         self.weights_im = w.imag
 
     def __call__(
-        self, x: Float[Array, "*grid_shape channels_in"]
-    ) -> Float[Array, "*grid_shape channels_out"]:
+        self, x: Float[Array, "*coords channels_in"]
+    ) -> Float[Array, "*coords channels_out"]:
         """Perform a spectral convolution using an FFT.
 
         Args:
-            x: Input array with shape ``(*grid_shape, channels_in)``, where
-                ``*grid_shape`` gives the number of grid points along each
-                spatial axis (e.g. ``(n,)`` for 1D or ``(nx, ny)`` for 2D).
+            x: Input array with shape (*coords, channels_in)
 
         Returns:
-            Array with shape ``(*grid_shape, channels_out)``.
+            Array with shape (*coords, channels_out)
         """
-        grid_shape = x.shape[: self.n_dims]
-        grid_axes = tuple(range(self.n_dims))
+        coords = x.shape[: self.n_dims]
+        coord_axes = tuple(range(self.n_dims))
 
         # Transform to spectral space
-        Fx = jnp.fft.rfftn(x, s=grid_shape, axes=grid_axes, norm="ortho")
+        Fx = jnp.fft.rfftn(x, s=coords, axes=coord_axes, norm="ortho")
         rfft_shape = Fx.shape
 
         # Truncate to retained modes
@@ -117,11 +122,13 @@ class SpectralConv(eqx.Module):
             n_freq = Fx.shape[i]
             k = self.n_modes[i]
 
-            if k > n_freq:
+            is_last = i == self.n_dims - 1
+            limit = n_freq if is_last else n_freq // 2
+            if k > limit:
                 raise ValueError(
-                    f"n_modes[{i}] = {k} exceeds the number of "
-                    f"available frequencies ({n_freq}) along axis {i}. "
-                    f"Increase the spatial resolution or reduce n_modes."
+                    f"n_modes[{i}] = {k} exceeds the maximum of {limit} "
+                    f"for axis {i} (resolution {n_freq}). "
+                    f"Reduce n_modes or increase the spatial resolution."
                 )
 
             if i < self.n_dims - 1:
@@ -152,7 +159,7 @@ class SpectralConv(eqx.Module):
         Fv = Fv.at[jnp.ix_(*slices)].set(Fv_trunc)
 
         # Transform back to physical space
-        out = jnp.fft.irfftn(Fv, s=grid_shape, axes=grid_axes, norm="ortho")
+        out = jnp.fft.irfftn(Fv, s=coords, axes=coord_axes, norm="ortho")
 
         return out
 
@@ -195,8 +202,8 @@ class Fourier(eqx.Module):
         self.activation = activation
 
     def __call__(
-        self, x: Float[Array, "*grid_shape channels_in"]
-    ) -> Float[Array, "*grid_shape channels_out"]:
+        self, x: Float[Array, "*coords channels_in"]
+    ) -> Float[Array, "*coords channels_out"]:
         """Apply the Fourier layer.
 
         The layer computes v_{t+1} = sigma(W v_t + F^{-1}[R * F(v_t)]),
@@ -207,11 +214,9 @@ class Fourier(eqx.Module):
         and * denotes element-wise multiplication.
 
         Args:
-            x: Input array with shape ``(*grid_shape, channels_in)``, where
-                ``*grid_shape`` gives the number of grid points along each
-                spatial axis (e.g. ``(n,)`` for 1D or ``(nx, ny)`` for 2D).
+            x: Input tensor of shape (*coords, channels_in)
 
         Returns:
-            Array with shape ``(*grid_shape, channels_out)``.
+            Array with shape (*coords, channels_out)
         """
         return self.activation(self.spectral(x) + self.linear(x))
