@@ -74,10 +74,7 @@ class MLP(eqx.Module):
 
 
 class FNO(eqx.Module):
-    """
-    Fourier neural operator.
-
-    The input is expected to have shape (*coords, channels_in).
+    """Fourier neural operator.
 
     Reference:
         Li et al. "Fourier Neural Operator for Parametric Partial
@@ -117,7 +114,7 @@ class FNO(eqx.Module):
                 Default: MLP with depth=2 and width=2*width.
         """
 
-        # Lifting: (*coords, channels_in) -> (*coords, width)
+        # Lifting: (*grid_shape, channels_in) -> (*grid_shape, width)
         if lift is not None:
             self.lift = lift
         else:
@@ -132,7 +129,7 @@ class FNO(eqx.Module):
                 dtype=dtype,
             )
 
-        # Fourier layers: (*coords, width) -> (*coords, width)
+        # Fourier layers: (*grid_shape, width) -> (*grid_shape, width)
         fourier_layers = []
         for _ in range(depth):
             key, subkey = jax.random.split(key)
@@ -148,7 +145,7 @@ class FNO(eqx.Module):
             )
         self.fourier_layers = tuple(fourier_layers)
 
-        # Projection: (*coords, width) -> (*coords, channels_out)
+        # Projection: (*grid_shape, width) -> (*grid_shape, channels_out)
         if project is not None:
             self.project = project
         else:
@@ -164,15 +161,18 @@ class FNO(eqx.Module):
             )
 
     def __call__(
-        self, x: Float[Array, "*coords channels_in"]
-    ) -> Float[Array, "*coords channels_out"]:
+        self, x: Float[Array, "*grid_shape channels_in"]
+    ) -> Float[Array, "*grid_shape channels_out"]:
         """Perform a forward pass.
 
         Args:
-            x: Input tensor of shape (*coords, channels_in)
+            x: Input array with shape ``(*grid_shape, channels_in)``
+                For example, a 1D input with a single channel would have shape
+                ``(n, 1)``, while a 2D input with a single channel
+                would have shape ``(nx, ny, 1)``.
 
         Returns:
-            Output tensor of shape (*coords, channels_out)
+            Output array with shape ``(*grid_shape, channels_out)``.
         """
         x = self.lift(x)
 
