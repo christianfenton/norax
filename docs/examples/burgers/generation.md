@@ -1,11 +1,11 @@
-# Generating training data on Burgers' equation in 1D
+# Generating training data for Burgers' equation in 1D
 
 This tutorial demonstrates how a training dataset for Burgers' equation in 1D
 is generated. Users that just want to run a generation script without reading
 this tutorial can look at `examples/burgers1d/generate.py` on
 [GitHub](https://github.com/christianfenton/norax).
 
-**Note:** This tutorial requires users to have `h5py` and
+**Note:** This tutorial requires users to have `pyarrow` and
 [pardax](https://github.com/christianfenton/pardax) installed.
 
 ## Problem statement
@@ -28,12 +28,17 @@ where $\Delta$ is the Laplacian.
 ## Setup
 
 ```python
-import h5py
+import json
+import math
+import pathlib
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import equinox as eqx
 import pardax as pdx
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 nu = 0.02  # Kinematic viscosity
 L = 1.0  # Domain length
@@ -122,7 +127,7 @@ def diffusion(t: float, u: jax.Array, params: dict) -> jax.Array:
 ```
 
 The solution is advanced through time with an implicit-explicit (IMEX) scheme.
-The advective term is advanced with a forward Euler method and the
+The advective term is advanced with a fourth-order Runge-Kutta (RK4) method and the
 diffusive term is advanced with a backward Euler method.
 
 The linear system resulting from the discretisation of the diffusive term
@@ -157,8 +162,6 @@ implicit = pdx.BackwardEuler(root_finder=root_finder)
 ```
 
 ```python
-import math
-
 params = {"nu": nu, "dx": dx}
 step_size = 1e-4
 t_span = (0.0, 1.0)
@@ -168,18 +171,18 @@ step_size = jnp.asarray((t_span[1] - t_span[0]) / num_steps)
 
 
 def imex_step(carry, _):
-    t, y, exp_st, imp_st = carry
-    y_star, exp_st = exp_st(advection, t, y, step_size, params)
-    y_new, imp_st = imp_st(diffusion, t, y_star, step_size, params)
-    return (t + step_size, y_new, exp_st, imp_st), (t + step_size, y_new)
+    t, y, explicit, implicit = carry
+    y_star, explicit = explicit(advection, t, y, step_size, params)
+    y_new, implicit = implicit(diffusion, t, y_star, step_size, params)
+    return (t + step_size, y_new, explicit, implicit), None
 
 
 @jax.jit
 def solve(y0):
-    (_, y_final, _, _), _ = jax.lax.scan(
+    carry, _ = jax.lax.scan(
         imex_step, (t_span[0], y0, explicit, implicit), length=num_steps
     )
-    return y_final
+    return carry[1]
 
 solve_batch = jax.vmap(solve)
 ```
@@ -223,53 +226,29 @@ plt.show()
 ## Generating and saving the dataset
 
 Rather than solving for all samples at once, we generate and write in batches
-to keep peak memory usage bounded. The HDF5 datasets are pre-allocated with
-the full shape and filled slice-by-slice.
-
-First, infer the dtype from a single probe sample:
-
-```python
-key, subkey = jax.random.split(key)
-_y0_probe = grf.sample(subkey)
-dtype = np.asarray(_y0_probe).dtype
-```
-
-Then create the HDF5 file and fill it batch by batch:
+to keep peak memory usage bounded. Each batch is appended to a Parquet file
+with columns `sample_id`, `x`, `u0`, and `u_end`. The dataset is saved as a
+directory containing `data.parquet` and a `metadata.json` sidecar.
 
 ```python
-output_path = "myburgersdataset.h5"
+dtype = np.float32
+pa_float = pa.from_numpy_dtype(dtype)
 
-with h5py.File(output_path, "w") as f:
-    ds_in = f.create_dataset(
-        "inputs",
-        shape=(num_samples, resolution, 2),
-        dtype=dtype,
-        chunks=(min(batch_size, num_samples), resolution, 2),
-    )
-    ds_out = f.create_dataset(
-        "outputs",
-        shape=(num_samples, resolution, 1),
-        dtype=dtype,
-        chunks=(min(batch_size, num_samples), resolution, 1),
-    )
+schema = pa.schema(
+    [
+        pa.field("sample_id", pa.int64()),
+        pa.field("x", pa.list_(pa_float)),
+        pa.field("u0", pa.list_(pa_float)),
+        pa.field("u_end", pa.list_(pa_float)),
+    ]
+)
 
-    ds_in.attrs["description"] = (
-        "[sample, :, 0] = grid points x, "
-        "[sample, :, 1] = initial condition u_0(x)"
-    )
-    ds_out.attrs["description"] = "[sample, :, 0] = solution u(x, t_end)"
+dataset_dir = pathlib.Path("myburgersdataset")
+dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    f.attrs.update(
-        {
-            "nu": nu,
-            "dt": step_size,
-            "t_end": t_span[1],
-            "resolution": resolution,
-            "num_samples": num_samples,
-            "L": L,
-        }
-    )
-
+with pq.ParquetWriter(
+    dataset_dir / "data.parquet", schema, compression="snappy"
+) as writer:
     for start in range(0, num_samples, batch_size):
         end = min(start + batch_size, num_samples)
         batch = end - start
@@ -277,27 +256,62 @@ with h5py.File(output_path, "w") as f:
         key, subkey = jax.random.split(key)
         batch_keys = jax.random.split(subkey, batch)
         y0 = sample_batch(batch_keys)  # (batch, resolution)
+        y_end = solve_batch(y0)  # (batch, resolution)
 
-        y_end = solve_batch(y0)  # (batch, T+1, resolution)
+        y0_np = np.asarray(y0, dtype=dtype)
+        y_end_np = np.asarray(y_end, dtype=dtype)
+        sample_ids = np.arange(start, end, dtype=np.int64)
+        # PyArrow list columns are stored as a flat values buffer plus an
+        # offsets array where offsets[i] is the start of row i, so row i
+        # spans flat_values[offsets[i]:offsets[i+1]].
+        offsets = np.arange(
+            0, (batch + 1) * resolution, resolution, dtype=np.int32
+        )
 
-        inputs_np = np.empty((batch, resolution, 2), dtype=dtype)
-        inputs_np[:, :, 0] = x[None, :]
-        inputs_np[:, :, 1] = np.asarray(y0)
+        rb = pa.RecordBatch.from_arrays(
+            [
+                pa.array(sample_ids, type=pa.int64()),
+                pa.ListArray.from_arrays(
+                    pa.array(offsets, type=pa.int32()),
+                    pa.array(np.tile(x, batch), type=pa_float),
+                ),
+                pa.ListArray.from_arrays(
+                    pa.array(offsets, type=pa.int32()),
+                    pa.array(y0_np.flatten(), type=pa_float),
+                ),
+                pa.ListArray.from_arrays(
+                    pa.array(offsets, type=pa.int32()),
+                    pa.array(y_end_np.flatten(), type=pa_float),
+                ),
+            ],
+            schema=schema,
+        )
+        writer.write_batch(rb)
 
-        ds_in[start:end] = inputs_np
-        ds_out[start:end] = np.asarray(y_end)[:, :, None]
+        print(f"  {end}/{num_samples} samples generated")
 
-        print(f"  {end}/{num_samples} samples written")
+metadata = {
+    "nu": nu,
+    "dt": float(step_size),
+    "t_end": 1.0,
+    "resolution": resolution,
+    "L": L,
+    "seed": 0,
+    "num_samples": num_samples,
+    "dtype": "float32",
+}
+with open(dataset_dir / "metadata.json", "w") as f:
+    json.dump(metadata, f, indent=2)
 
-print(f"Dataset saved to {output_path}")
+print(f"Dataset saved to {dataset_dir}")
 ```
 
 ```txt
-  64/1280 samples written
-  128/1280 samples written
-  192/1280 samples written
+  64/1280 samples generated
+  128/1280 samples generated
+  192/1280 samples generated
   ...
-  1216/1280 samples written
-  1280/1280 samples written
-Dataset saved to myburgersdataset.h5
+  1216/1280 samples generated
+  1280/1280 samples generated
+Dataset saved to myburgersdataset
 ```

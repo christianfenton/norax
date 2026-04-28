@@ -40,7 +40,6 @@ extra_javascript:
 nav:
   - Home: index.md
   - Examples:
-    - Burgers' equation:
-      - Training an FNO: examples/burgers/training.md
-      - Data generation: examples/burgers/generation.md
+    - Training an FNO on Burgers' equation: examples/burgers/training.md
+    - Generating training data: examples/burgers/generation.md
   - API reference: api.md
