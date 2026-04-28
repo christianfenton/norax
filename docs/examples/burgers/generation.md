@@ -1,8 +1,13 @@
 # Generating training data for Burgers' equation in 1D
 
-This tutorial demonstrates how a training dataset for Burgers' equation in 1D
-is generated. Users that just want to run a generation script without reading
-this tutorial can look at `examples/burgers1d/generate.py` on
+This example demonstrates how to generate training data for a neural operator
+to predict solutions of Burgers' equation in 1D. The data is generated
+according to the method described in Li, Zongyi, et al. 
+"Fourier neural operator for parametric partial differential equations." 
+arXiv preprint arXiv:2010.08895 (2020).
+
+Users that just want to run a script without reading
+this tutorial can check out `examples/burgers1d/generate.py` on
 [GitHub](https://github.com/christianfenton/norax).
 
 **Note:** This tutorial requires users to have `pyarrow` and
@@ -21,7 +26,7 @@ where $\nu > 0$ is the kinematic viscosity. The task is to generate
 input-output pairs $u_0(x) = u(x, t=0)$ and $u(x, t=1)$,
 where the initial conditions are drawn from a Gaussian random field:
 
-$$ u_0 \sim \mathcal{N}\!\left(0,\; 625(-\Delta + 25I)^{-2}\right), $$
+$$ u_0 \sim \mathcal{N}\left(0,\; 625(-\Delta + 25I)^{-2}\right), $$
 
 where $\Delta$ is the Laplacian.
 
