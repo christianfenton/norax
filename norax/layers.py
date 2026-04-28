@@ -91,8 +91,7 @@ class SpectralConv(eqx.Module):
         self.n_dims = len(n_modes)
 
         mode_shape = tuple(
-            2 * m if i < len(n_modes) - 1 else m
-            for i, m in enumerate(n_modes)
+            2 * m if i < len(n_modes) - 1 else m for i, m in enumerate(n_modes)
         )
         sh = (channels_out, channels_in) + mode_shape
         w = init(key, shape=sh, dtype=dtype)
