@@ -22,32 +22,14 @@ for more details.
 
 ## Installation
 
-[uv](https://docs.astral.sh/uv/) is recommended for installation.
-
-### Using uv
-
-With SSH:
 ```bash
-uv init my-project
-cd my-project
-uv add git+ssh://git@github.com/christianfenton/norax.git
+pip install norax
 ```
 
-With HTTPS:
-```bash
-uv add git+https://github.com/christianfenton/norax.git
-```
+Or with [uv](https://docs.astral.sh/uv/):
 
-### Using pip
-
-With SSH:
 ```bash
-pip install git+ssh://git@github.com/christianfenton/norax.git
-```
-
-With HTTPS:
-```bash
-pip install git+https://github.com/christianfenton/norax.git
+uv add norax
 ```
 
 ## Quick start
