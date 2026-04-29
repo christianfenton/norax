@@ -1,6 +1,6 @@
 [project]
 name = "norax"
-version = "1.0.0"
+version = "1.0.1"
 authors = [{name="christianfenton", email="christianfenton@icloud.com"}]
 description = "Neural operators in JAX"
 readme = "README.md"
