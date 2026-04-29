@@ -1,13 +1,20 @@
 [project]
 name = "norax"
-version = "0.2.0"
+version = "1.0.0"
+authors = [{name="christianfenton", email="christianfenton@icloud.com"}]
 description = "Neural operators in JAX"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
 dependencies = [
     "equinox>=0.13.6",
+    "jax>=0.10.0",
     "jaxtyping>=0.3.9",
 ]
+
+[project.urls]
+Homepage = "https://christianfenton.github.io/norax/"                                                                                                  
+Repository = "https://github.com/christianfenton/norax"
 
 [project.optional-dependencies]
 examples = [
