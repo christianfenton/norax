@@ -18,16 +18,13 @@ Repository = "https://github.com/christianfenton/norax"
 
 [project.optional-dependencies]
 examples = [
-    "pardax",
     "datasets>=4.8.4",
     "ipykernel>=7.2.0",
     "matplotlib>=3.10.8",
     "optax>=0.2.5",
+    "pardax>=1.0.0",
     "pyarrow>=14.0",
 ]
-
-[tool.uv.sources]
-pardax = { git = "ssh://git@github.com/christianfenton/pardax.git" }
 
 [dependency-groups]
 docs = [
