@@ -27,8 +27,7 @@ uv sync --extra examples
 
 ## 1. Data Generation
 
-This section describes how the training dataset for the 1D Burgers' equation
-example is generated. The source code is in `examples/burgers1d/generate.py`.
+Source file: `examples/burgers1d/generate.py`
 
 ### 1.1 Initial conditions
 
@@ -54,13 +53,24 @@ For further details on numerical time integration in JAX, check out
 ### 1.3 Data schema
 
 The dataset is stored as a directory containing:
+- `data.parquet`: Columnar data file
+- `metadata.json`: Dataset attributes
 
-- `data.parquet` — columnar data file with columns:
-  - `sample_id` (`int64`): sample index
-  - `x` (`list<float32>`, length `n`): spatial grid coordinates
-  - `u0` (`list<float32>`, length `n`): initial condition $u_0(x)$
-  - `u_end` (`list<float32>`, length `n`): solution $u(x, t_\text{end})$
-- `metadata.json` — dataset attributes (`nu`, `dt`, `t_end`, `resolution`, `L`, `seed`, `num_samples`, `dtype`)
+The columns in `data.parquet` are:
+- `sample_id` (`int64`): Sample index
+- `x` (`list<dtype>`, length `n`): Spatial grid coordinates
+- `u0` (`list<dtype>`, length `n`): Initial condition $u_0(x)$
+- `u_end` (`list<dtype>`, length `n`): Solution $u(x, t_\text{end})$
+
+The attributes in `metadata.json` are:
+- `nu`: Viscosity
+- `dt`: Time step size
+- `t_end`: End time
+- `resolution`: Number of grid points
+- `L`: Length of the domain
+- `seed`: Seed for pseudo-random number generator
+- `num_samples`: Number of samples (rows) in the data file
+- `dtype`: Data type
 
 ### 1.4 Generating the dataset
 
@@ -90,13 +100,7 @@ This creates `examples/burgers1d/data/burgers1d_nu0p02_res2048/`.
 
 ## 2. Training
 
-This section describes how to train an FNO on the 1D Burgers' equation
-dataset and visualise the results.
-
-Source files:
-
-- `examples/burgers1d/train.py`: training script
-- `examples/burgers1d/visualise.ipynb`: visualisation notebook
+Source file: `examples/burgers1d/train.py`
 
 ### 2.1 Model
 
@@ -165,8 +169,14 @@ recommended serialisation pattern.
 
 ## 3. Visualisation
 
-After training, open the notebook to visualise the predictions:
+Source files:
+
+- `examples/burgers1d/visualise.py`: GIF of the PDE solution and FNO predictions for random initial conditions
+- `examples/burgers1d/visualise_sine.py`: FNO prediction for a sinusoidal initial condition
+
+Both scripts write their outputs to `examples/burgers1d/figures/`.
 
 ```bash
-uv run jupyter notebook examples/burgers1d/visualise.ipynb
+uv run examples/burgers1d/visualise.py
+uv run examples/burgers1d/visualise_sine.py
 ```
